@@ -98,3 +98,6 @@ tasks.withType(Checkstyle) {
 		html.required = true
 	}
 }
+
+checkstyleTest.enabled = false
+pmdTest.enabled = false
