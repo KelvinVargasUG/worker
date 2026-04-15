@@ -13,10 +13,15 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -33,7 +38,7 @@ class OutboxEventProcessorTest {
 
     @BeforeEach
     void setUp() {
-        processor = new OutboxEventProcessor(outboxRepo, kafkaTemplate);
+        processor = new OutboxEventProcessor(outboxRepo, kafkaTemplate, 10, 30L, 10L);
     }
 
     @Test
@@ -137,6 +142,25 @@ class OutboxEventProcessorTest {
         assertThat(event.getRetryCount()).isEqualTo(1);
         assertThat(event.getLastError()).contains("interrupted");
         assertThat(event.isProcessed()).isFalse();
+        verify(outboxRepo).save(event);
+    }
+
+    @Test
+    void shouldHandleTimeoutException() throws Exception {
+        OutboxEventEntity event = buildEvent();
+        @SuppressWarnings("unchecked")
+        CompletableFuture<Object> mockFuture = mock(CompletableFuture.class);
+        when(mockFuture.get(anyLong(), any(TimeUnit.class))).thenThrow(new TimeoutException("timed out"));
+
+        when(kafkaTemplate.send(eq("customer-events"), anyString(), anyString()))
+                .thenReturn((CompletableFuture) mockFuture);
+
+        processor.publishEvent(event, "customer-events");
+
+        assertThat(event.getRetryCount()).isEqualTo(1);
+        assertThat(event.getLastError()).contains("Timeout");
+        assertThat(event.isProcessed()).isFalse();
+        assertThat(event.getNextRetryAt()).isAfter(LocalDateTime.now().plusSeconds(29));
         verify(outboxRepo).save(event);
     }
 

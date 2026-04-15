@@ -2,8 +2,8 @@ package com.sofka.worker.scheduler;
 
 import com.sofka.worker.entity.OutboxEventEntity;
 import com.sofka.worker.repository.OutboxEventJpaRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -11,23 +11,36 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class OutboxEventProcessor {
-
-    private static final int MAX_RETRIES = 10;
-    private static final long BASE_DELAY_SECONDS = 30L;
 
     private final OutboxEventJpaRepository outboxRepo;
     private final KafkaTemplate<String, String> kafkaTemplate;
+    private final int maxRetries;
+    private final long baseDelaySeconds;
+    private final long sendTimeoutSeconds;
+
+    public OutboxEventProcessor(OutboxEventJpaRepository outboxRepo,
+                                KafkaTemplate<String, String> kafkaTemplate,
+                                @Value("${outbox.retry.max-retries:10}") int maxRetries,
+                                @Value("${outbox.retry.base-delay-seconds:30}") long baseDelaySeconds,
+                                @Value("${outbox.send.timeout-seconds:10}") long sendTimeoutSeconds) {
+        this.outboxRepo = outboxRepo;
+        this.kafkaTemplate = kafkaTemplate;
+        this.maxRetries = maxRetries;
+        this.baseDelaySeconds = baseDelaySeconds;
+        this.sendTimeoutSeconds = sendTimeoutSeconds;
+    }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void publishEvent(OutboxEventEntity event, String topic) {
         try {
             kafkaTemplate.send(topic, event.getAggregateId(), event.getPayload())
-                    .get();
+                    .get(sendTimeoutSeconds, TimeUnit.SECONDS);
 
             event.setProcessed(true);
             event.setProcessedAt(LocalDateTime.now());
@@ -39,6 +52,8 @@ public class OutboxEventProcessor {
 
         } catch (ExecutionException ex) {
             handleFailure(event, ex.getCause() != null ? ex.getCause().getMessage() : ex.getMessage());
+        } catch (TimeoutException ex) {
+            handleFailure(event, "Timeout tras " + sendTimeoutSeconds + "s esperando respuesta de Kafka");
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
             handleFailure(event, "Interrupted: " + ex.getMessage());
@@ -49,16 +64,16 @@ public class OutboxEventProcessor {
         event.setRetryCount(event.getRetryCount() + 1);
         event.setLastError(truncate(errorMsg));
 
-        if (event.getRetryCount() >= MAX_RETRIES) {
+        if (event.getRetryCount() >= maxRetries) {
             event.setProcessed(true);
             event.setProcessedAt(LocalDateTime.now());
             log.error("Evento agotó {} reintentos, marcado como fallido: id={}, error={}",
-                    MAX_RETRIES, event.getId(), errorMsg);
+                    maxRetries, event.getId(), errorMsg);
         } else {
-            long delay = BASE_DELAY_SECONDS * (1L << event.getRetryCount());
+            long delay = baseDelaySeconds * (1L << event.getRetryCount());
             event.setNextRetryAt(LocalDateTime.now().plusSeconds(delay));
             log.warn("Reintento {}/{} para evento id={}. Próximo intento: {}. Error: {}",
-                    event.getRetryCount(), MAX_RETRIES,
+                    event.getRetryCount(), maxRetries,
                     event.getId(), event.getNextRetryAt(), errorMsg);
         }
 
