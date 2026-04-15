@@ -39,4 +39,13 @@ public class OutboxEventEntity {
 
     @Column(name = "processed_at")
     private LocalDateTime processedAt;
+
+    @Column(name = "retry_count", nullable = false)
+    private int retryCount;
+
+    @Column(name = "last_error", length = 500)
+    private String lastError;
+
+    @Column(name = "next_retry_at")
+    private LocalDateTime nextRetryAt;
 }
