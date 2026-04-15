@@ -14,8 +14,8 @@ Componente responsable de la implementación del patrón **Outbox** para garanti
 ```mermaid
 flowchart TB
     subgraph Docker Compose
-        Client([Cliente HTTP]) -->|REST 8080| CS["ms-customer-service\n/clientes"]
-        Client -->|REST 8081| AS["ms-account-service\n/cuentas · /movimientos · /reportes"]
+        Client([Cliente HTTP]) -->|REST 8080| CS["ms-customer-service\n/api/ms-customer-service/clientes"]
+        Client -->|REST 8081| AS["ms-account-service\n/api/ms-account-service/cuentas\n/movimientos · /reportes"]
 
         CS -->|JPA| DB_C[(PostgreSQL\nms_customer_db)]
         CS -->|Inserta evento| OT[(outbox_eventos)]
@@ -76,12 +76,12 @@ Edita `src/main/resources/application.properties` con tus credenciales:
 ```properties
 spring.application.name=worker
 
-spring.datasource.url=jdbc:postgresql://localhost:5432/ms_account_db
+spring.datasource.url=jdbc:postgresql://localhost:5432/ms_customer_db
 spring.datasource.username=tu_usuario
 spring.datasource.password=tu_contrasena
 spring.datasource.driver-class-name=org.postgresql.Driver
 
-spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.hibernate.ddl-auto=none
 spring.jpa.show-sql=false
 
 spring.kafka.bootstrap-servers=localhost:9092
